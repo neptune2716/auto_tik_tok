@@ -10,7 +10,7 @@ from typing import List, Tuple
 from config import (
     IMAGEMAGICK_PATH, FONT_SIZE, FONT_NAME,
     MIN_WORDS_PER_SEGMENT, MAX_WORDS_PER_SEGMENT, OUTPUT_DIR,
-    get_project_dirs
+    get_project_dirs, VOICE_OPTIONS
 )
 
 logger = logging.getLogger(__name__)
@@ -234,22 +234,19 @@ def create_group_subtitles(segment: str, duration: float, video_width: int, word
     if len(parts) > 1:
         current_group = []
         group_start = None
-        non_title_words = [(w, s, e) for w, s, e in word_timings 
-                          if w.lower() not in [tw.lower() for tw in title_words]]
         
-        for i, (word, start, end) in enumerate(non_title_words):
+        # Remove the filtering of title words - process all words after the title timing
+        non_title_timings = word_timings[len(title_words):]
+        
+        for i, (word, start, end) in enumerate(non_title_timings):
             if len(current_group) == 0:
                 group_start = start
             current_group.append(word)
             
-            # Force create group if:
-            # - We have 5 or more words
-            # - Current word ends with punctuation
-            # - This is the last word
             should_create_group = (
                 len(current_group) >= 5 or 
                 word[-1] in ".!?" or
-                i == len(non_title_words) - 1  # Last word
+                i == len(non_title_timings) - 1  # Last word
             )
             
             if should_create_group:
@@ -294,14 +291,14 @@ def save_story_parts(title: str, segments: list, project_id: str):
             with open(part_path, "w", encoding="utf-8") as f:
                 f.write(f"{title}\n\n{part_info}\n\n{segment}")
 
-async def async_generate_speech(text: str, output_path: str) -> List[Tuple[str, float, float]]:
+async def async_generate_speech(text: str, output_path: str, voice_name: str) -> List[Tuple[str, float, float]]:
     """
     Generates speech and returns word timing information
     Returns: List of (word, start_time, end_time) tuples
     """
     try:
         # Première instance pour les timings
-        communicate_timing = edge_tts.Communicate(text, "en-US-JennyNeural")
+        communicate_timing = edge_tts.Communicate(text, voice_name)
         word_timings = []
         async for event in communicate_timing.stream():
             if event["type"] == "WordBoundary":
@@ -312,18 +309,18 @@ async def async_generate_speech(text: str, output_path: str) -> List[Tuple[str, 
                  ))
         
         # Deuxième instance pour sauvegarder l'audio
-        communicate_save = edge_tts.Communicate(text, "en-US-JennyNeural")
+        communicate_save = edge_tts.Communicate(text, voice_name)
         await communicate_save.save(output_path)
         
-        logger.info(f"Successfully generated speech at {output_path}")
+        logger.info(f"Successfully generated speech at {output_path} using voice {voice_name}")
         return word_timings
     except Exception as e:
         logger.error(f"Failed to generate speech: {str(e)}")
         raise
 
-def generate_speech(text: str, output_path: str) -> List[Tuple[str, float, float]]:
+def generate_speech(text: str, output_path: str, voice_name: str) -> List[Tuple[str, float, float]]:
     """Generate speech from text using Edge TTS and return word timings."""
-    return asyncio.run(async_generate_speech(text, output_path))
+    return asyncio.run(async_generate_speech(text, output_path, voice_name))
 
 def process_story_video(full_video_path: str, title: str, story: str, project_id: str) -> List[str]:
     """
@@ -349,6 +346,18 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
         segments = split_text_into_segments(story, MIN_WORDS_PER_SEGMENT, MAX_WORDS_PER_SEGMENT)
         logger.info(f"Split story into {len(segments)} segment(s)")
         
+        # Select random voice to use for all segments
+        selected_voice = random.choice(VOICE_OPTIONS)
+        logger.info(f"Selected voice: {selected_voice}")
+        
+        # Estimate total duration needed (rough estimation)
+        # Assuming average speaking rate of 150 words per minute
+        words = story.split()
+        estimated_duration = len(words) / 150 * 60  # Convert to seconds
+        
+        if estimated_duration < 60:  # Less than 1 minute
+            raise RuntimeError(f"Story too short, estimated duration: {estimated_duration:.1f} seconds")
+            
         # Save story parts to files
         save_story_parts(title, segments, project_id)
         
@@ -365,14 +374,13 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
             part_info = f"\nPart {i+1}/{len(segments)}" if len(segments) > 1 else ""
             full_text = f"{title}{part_info}\n\n{segment}"
             
-            # Generate audio
+            # Generate audio with selected voice
             voice_filename = os.path.join(dirs['voice'], f"audio_{i+1}.mp3")
-            word_timings = generate_speech(full_text, voice_filename)
+            word_timings = generate_speech(full_text, voice_filename, selected_voice)
             audio = AudioFileClip(voice_filename)
             
-            # Only end decay for audio
-            end_decay = 3
-            total_duration = audio.duration + end_decay
+            # Simple duration without decay
+            total_duration = audio.duration + 3  # Add 3s for last subtitle to be readable
             
             # Extract video segment
             max_start = full_duration - total_duration
@@ -387,9 +395,9 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
                 last_sub = subs[-1]
                 subs[-1] = last_sub.set_duration(total_duration - last_sub.start)
             
-            # Create final composite
+            # Create final composite without audio fade
             composite = CompositeVideoClip([
-                video_segment.set_audio(audio.audio_fadeout(end_decay))  # Only fade out audio
+                video_segment.set_audio(audio)  # No audio fade
             ] + subs)
             
             # Configure progress bar and save

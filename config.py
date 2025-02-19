@@ -20,6 +20,14 @@ MAX_WORDS_PER_SEGMENT = 225
 SUBREDDIT = "funnystories"
 USER_AGENT = "reel_app/0.1"
 
+# TTS Voice settings
+VOICE_OPTIONS = [
+    "en-US-JennyNeural",     # Female, natural and clear
+    "en-US-GuyNeural",       # Male, professional
+    "en-GB-SoniaNeural",     # British female
+    "en-AU-NatashaNeural"    # Australian female
+]
+
 def get_project_dirs(project_id: str) -> dict:
     """Returns dictionary of project-specific directory paths."""
     project_dir = os.path.join(OUTPUT_DIR, f"Video{project_id}")
