@@ -9,6 +9,10 @@ venv/
 generated/
 story_history.json
 
+# History files
+story_history.json
+used_stories.json
+
 # Video files
 *.mp4
 *.avi

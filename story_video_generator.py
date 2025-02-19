@@ -221,12 +221,11 @@ def create_group_subtitles(segment: str, duration: float, video_width: int, word
             break
     
     if title_start is not None and title_end is not None:
-        # Créer le clip du titre
         title_clip = create_dynamic_text_clip(
             text=title,
             total_duration=title_end - title_start,
             video_width=video_width,
-            fontsize=FONT_SIZE * 1.2,  # Titre plus grand
+            fontsize=FONT_SIZE * 1.2,
             position='center'
         ).set_start(title_start)
         clips.append(title_clip)
@@ -235,23 +234,34 @@ def create_group_subtitles(segment: str, duration: float, video_width: int, word
     if len(parts) > 1:
         current_group = []
         group_start = None
+        non_title_words = [(w, s, e) for w, s, e in word_timings 
+                          if w.lower() not in [tw.lower() for tw in title_words]]
         
-        for word, start, end in word_timings:
-            if word.lower() not in [w.lower() for w in title_words]:  # Ignorer les mots du titre
-                if len(current_group) == 0:
-                    group_start = start
-                current_group.append(word)
-                
-                if len(current_group) >= 5 or word[-1] in ".!?":
-                    group_text = " ".join(current_group)
-                    clip = create_dynamic_text_clip(
-                        text=group_text,
-                        total_duration=end - group_start,
-                        video_width=video_width,
-                        position='center'
-                    ).set_start(group_start)
-                    clips.append(clip)
-                    current_group = []
+        for i, (word, start, end) in enumerate(non_title_words):
+            if len(current_group) == 0:
+                group_start = start
+            current_group.append(word)
+            
+            # Force create group if:
+            # - We have 5 or more words
+            # - Current word ends with punctuation
+            # - This is the last word
+            should_create_group = (
+                len(current_group) >= 5 or 
+                word[-1] in ".!?" or
+                i == len(non_title_words) - 1  # Last word
+            )
+            
+            if should_create_group:
+                group_text = " ".join(current_group)
+                clip = create_dynamic_text_clip(
+                    text=group_text,
+                    total_duration=end - group_start,
+                    video_width=video_width,
+                    position='center'
+                ).set_start(group_start)
+                clips.append(clip)
+                current_group = []
     
     return clips
 
@@ -355,13 +365,14 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
             part_info = f"\nPart {i+1}/{len(segments)}" if len(segments) > 1 else ""
             full_text = f"{title}{part_info}\n\n{segment}"
             
-            # Générer l'audio avec Coqui-TTS
+            # Generate audio
             voice_filename = os.path.join(dirs['voice'], f"audio_{i+1}.mp3")
             word_timings = generate_speech(full_text, voice_filename)
             audio = AudioFileClip(voice_filename)
             
-            # Calculate total duration including end decay
-            total_duration = audio.duration + 3  # add 3s decay at the end
+            # Only end decay for audio
+            end_decay = 3
+            total_duration = audio.duration + end_decay
             
             # Extract video segment
             max_start = full_duration - total_duration
@@ -371,9 +382,14 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
             # Create subtitles with precise timing from TTS
             subs = create_group_subtitles(full_text, audio.duration, int(video_segment.w), word_timings)
             
-            # Create final composite with synchronized audio and subtitles
+            # Extend the duration of the last subtitle to the end of the video
+            if subs:
+                last_sub = subs[-1]
+                subs[-1] = last_sub.set_duration(total_duration - last_sub.start)
+            
+            # Create final composite
             composite = CompositeVideoClip([
-                video_segment.set_audio(audio)  # audio starts at 0s
+                video_segment.set_audio(audio.audio_fadeout(end_decay))  # Only fade out audio
             ] + subs)
             
             # Configure progress bar and save
@@ -383,11 +399,16 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
                     percentage = (value / self.bars[bar]['total']) * 100
                     print(f"Writing video: {percentage:.0f}% complete", end='\r')
 
+            # Remplacer les caractères non autorisés dans le nom de fichier
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title.replace(' ', '_')
+            
             if len(segments) == 1:
-                label = f"video{project_id}Final"
+                filename = f"{safe_title}.mp4"
             else:
-                label = f"video{project_id}PartFinal" if i == len(segments) - 1 else f"video{project_id}Part{i+1}"
-            out_filename = os.path.join(dirs['final'], f"video_{label}.mp4")
+                filename = f"{safe_title}_part{i+1}.mp4"
+                
+            out_filename = os.path.join(dirs['final'], filename)
             
             composite.write_videofile(out_filename, 
                                     audio_codec="aac",

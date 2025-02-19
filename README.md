@@ -2,11 +2,21 @@
 
 Automatically creates TikTok/Reels style videos from Reddit stories with text-to-speech and synchronized subtitles.
 
+## Features
+
+- Fetches stories from Reddit
+- Maintains history of used stories to avoid duplicates
+- Edge TTS for natural-sounding narration
+- Synchronized subtitles with word-level timing
+- Handles long stories by splitting into multiple parts
+- Background video randomization
+
 ## Requirements
 
 - Python 3.7+
 - ImageMagick (for text rendering)
 - A base background video file
+- edge-tts (`pip install edge-tts`)
 
 ## Installation
 
@@ -44,15 +54,17 @@ Automatically creates TikTok/Reels style videos from Reddit stories with text-to
 
 ```
 test_vacances/
-├── base_video.mp4        # Your background video
-├── main.py              # Main script
-├── reddit_story.py      # Reddit story fetcher
-├── story_video_generator.py  # Video generation logic
-├── requirements.txt     # Python dependencies
-└── generated/          # Generated content (gitignored)
-    ├── final/         # Final videos
-    ├── voice/         # TTS audio files
-    └── story/         # Story text files
+├── base_video.mp4          # Your background video
+├── main.py                # Main script
+├── reddit_story.py        # Reddit story fetcher
+├── story_video_generator.py # Video generation logic
+├── story_history.py       # Story tracking system
+├── story_history.json     # Used stories database (auto-generated)
+├── requirements.txt       # Python dependencies
+└── generated/            # Generated content (gitignored)
+    ├── final/           # Final videos
+    ├── voice/           # TTS audio files
+    └── story/           # Story text files
 ```
 
 ## Usage
@@ -66,10 +78,12 @@ test_vacances/
 
 The script will:
 
-- Fetch a random story from r/funnystories
+- Check story_history.json to avoid duplicate stories
+- Fetch a fresh story from r/funnystories
 - Split it into segments if needed
-- Generate TTS audio
+- Generate natural speech using Edge TTS
 - Create synchronized subtitles
+- Only add the story to history after successful video generation
 - Produce final video(s) in the `final` directory
 
 ## Output Format
