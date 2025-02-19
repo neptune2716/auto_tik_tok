@@ -70,23 +70,44 @@ def split_text_into_segments(story: str, min_words: int = MIN_WORDS_PER_SEGMENT,
 # Replace the dynamic text clip with a fixed TextClip for 5-word groups.
 def create_dynamic_text_clip(text: str, total_duration: float, video_width: int, fontsize: int = FONT_SIZE, font: str = FONT_NAME, position: str = 'center') -> VideoClip:
     """
-    Splits the story into segments at sentence boundaries so that each segment
-    has roughly between min_words and max_words.
+    Creates a text clip with enhanced visibility and contrast.
     """
-    from moviepy.editor import TextClip
+    from moviepy.editor import TextClip, CompositeVideoClip
+    
     margin = int(video_width * 0.05)
     processed_text = text.upper().replace("-", "-\n")
-    # Création du clip texte sans stroke pour éviter l'effet "paté noir".
-    clip = TextClip(
-        processed_text, 
-        fontsize=fontsize, 
-        font=font, 
+    
+    # Créer le texte principal
+    main_text = TextClip(
+        processed_text,
+        fontsize=fontsize,
+        font=font,
         color='white',
         method='caption',
         size=(video_width - 2 * margin, None),
-        align='center'
+        align='center',
+        stroke_color='black',
+        stroke_width=2.5  # Contour noir plus épais
     )
-    return clip.set_duration(total_duration).set_position(position)
+    
+    # Créer une ombre du texte
+    shadow = TextClip(
+        processed_text,
+        fontsize=fontsize,
+        font=font,
+        color='black',
+        method='caption',
+        size=(video_width - 2 * margin, None),
+        align='center',
+    ).set_position(lambda t: (2, 2))  # Décalage de l'ombre
+    
+    # Combiner l'ombre et le texte principal
+    final_clip = CompositeVideoClip([
+        shadow,
+        main_text
+    ], size=main_text.size)
+    
+    return final_clip.set_duration(total_duration).set_position(position)
 
 def split_into_dynamic_groups(segment: str, is_title: bool = False) -> list:
     """
@@ -197,7 +218,7 @@ def create_group_subtitles(segment: str, duration: float, video_width: int, audi
             text=group_text,
             total_duration=end_time - start_time,
             video_width=video_width,
-            fontsize=40,
+            fontsize=FONT_SIZE,  # Utiliser FONT_SIZE au lieu de la valeur codée en dur
             position='center'
         ).set_start(start_time)
         clips.append(clip)

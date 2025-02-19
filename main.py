@@ -32,7 +32,19 @@ def main() -> None:
         if not os.path.exists(BASE_VIDEO):
             raise FileNotFoundError(f"Base video not found at {BASE_VIDEO}")
 
-        title, story = get_story("funnystories", project_id)
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                title, story = get_story("funnystories", project_id)
+                break
+            except RuntimeError as e:
+                if "No unused stories found" in str(e):
+                    if attempt == max_attempts - 1:
+                        raise RuntimeError("No new stories available after maximum attempts")
+                    logger.warning(f"Attempt {attempt + 1}: No unused stories found, retrying...")
+                    continue
+                raise
+
         word_count = len(story.split())
         logger.info(f"Fetched story: {word_count} words")
         logger.info(f"Title: {title}")

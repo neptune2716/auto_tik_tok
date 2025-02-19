@@ -10,8 +10,9 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "generated")
 
 # Video settings
 IMAGEMAGICK_PATH = os.getenv('IMAGEMAGICK_PATH', r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe")
-FONT_SIZE = 60
-FONT_NAME = "THEBOLDFONT-FREEVERSION"
+FONT_SIZE = 80  # Taille de base pour une vidéo 1080p
+FONT_SIZE_TITLE = FONT_SIZE * 1.2  # 20% plus grand pour les titres
+FONT_NAME = "Impact"
 MIN_WORDS_PER_SEGMENT = 150
 MAX_WORDS_PER_SEGMENT = 225
 
