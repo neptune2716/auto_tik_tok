@@ -1,9 +1,7 @@
 import os
 import json
 from typing import Set, Optional
-from config import BASE_DIR
-
-HISTORY_FILE = os.path.join(BASE_DIR, "story_history.json")
+from config import HISTORY_FILE
 
 class StoryHistory:
     def __init__(self):

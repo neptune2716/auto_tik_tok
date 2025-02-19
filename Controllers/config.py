@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_VIDEO = os.path.join(BASE_DIR, "base_video.mp4")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up one level from Controllers
+DATA_DIR = os.path.join(BASE_DIR, "data")
+BASE_VIDEO = os.path.join(DATA_DIR, "base_video.mp4")
 OUTPUT_DIR = os.path.join(BASE_DIR, "generated")
 
 # Video settings
@@ -27,6 +28,9 @@ VOICE_OPTIONS = [
     "en-GB-SoniaNeural",     # British female
     "en-AU-NatashaNeural"    # Australian female
 ]
+
+# Update history file path
+HISTORY_FILE = os.path.join(DATA_DIR, "story_history.json")
 
 def get_project_dirs(project_id: str) -> dict:
     """Returns dictionary of project-specific directory paths."""
