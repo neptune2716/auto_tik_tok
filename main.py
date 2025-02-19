@@ -35,7 +35,7 @@ def main() -> None:
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                title, story = get_story("funnystories", project_id)
+                title, story, history = get_story("funnystories", project_id)
                 break
             except RuntimeError as e:
                 if "No unused stories found" in str(e):
@@ -49,7 +49,13 @@ def main() -> None:
         logger.info(f"Fetched story: {word_count} words")
         logger.info(f"Title: {title}")
 
+        # Générer la vidéo
         output_videos = process_story_video(BASE_VIDEO, title, story, project_id)
+        
+        # Si on arrive ici, la génération a réussi, on peut mettre à jour l'historique
+        history.add_story(title)
+        logger.info(f"Story '{title}' added to history")
+        
         logger.info(f"Successfully generated {len(output_videos)} video parts")
         for video in output_videos:
             logger.info(f"Generated: {video}")

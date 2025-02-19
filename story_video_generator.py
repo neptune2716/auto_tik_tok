@@ -2,14 +2,10 @@ import os
 import re
 import random
 import logging
-from gtts import gTTS  # pip install gTTS
-from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, VideoClip  # pip install moviepy
+import asyncio
+import edge_tts
+from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, VideoClip
 from moviepy.config import change_settings
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import math
-from pydub import AudioSegment  # pip install pydub
-import speech_recognition as sr  # pip install SpeechRecognition
 from typing import List, Tuple
 from config import (
     IMAGEMAGICK_PATH, FONT_SIZE, FONT_NAME,
@@ -205,23 +201,57 @@ def estimate_word_timings(audio_duration: float, segment: str) -> list:
     
     return groups
 
-def create_group_subtitles(segment: str, duration: float, video_width: int, audio_file: str = None) -> list:
-    """Creates subtitle clips synchronized with TTS timing."""
-    # Get word timings based on duration
-    all_text = segment
-    timings = estimate_word_timings(duration, all_text)
-    
+def create_group_subtitles(segment: str, duration: float, video_width: int, word_timings: List[Tuple[str, float, float]]) -> list:
+    """Creates subtitle clips synchronized with exact TTS timing."""
+    parts = segment.split('\n\n')
+    title = parts[0]
     clips = []
-    # Create content clips
-    for group_text, start_time, end_time in timings:
-        clip = create_dynamic_text_clip(
-            text=group_text,
-            total_duration=end_time - start_time,
+    
+    # Trouver les timings du titre
+    title_words = title.split()
+    title_start = None
+    title_end = None
+    
+    # Chercher le premier et dernier mot du titre dans les timings
+    for word, start, end in word_timings:
+        if word.lower() == title_words[0].lower() and title_start is None:
+            title_start = start
+        if word.lower() == title_words[-1].lower():
+            title_end = end
+            break
+    
+    if title_start is not None and title_end is not None:
+        # Créer le clip du titre
+        title_clip = create_dynamic_text_clip(
+            text=title,
+            total_duration=title_end - title_start,
             video_width=video_width,
-            fontsize=FONT_SIZE,  # Utiliser FONT_SIZE au lieu de la valeur codée en dur
+            fontsize=FONT_SIZE * 1.2,  # Titre plus grand
             position='center'
-        ).set_start(start_time)
-        clips.append(clip)
+        ).set_start(title_start)
+        clips.append(title_clip)
+    
+    # Traiter le reste du texte
+    if len(parts) > 1:
+        current_group = []
+        group_start = None
+        
+        for word, start, end in word_timings:
+            if word.lower() not in [w.lower() for w in title_words]:  # Ignorer les mots du titre
+                if len(current_group) == 0:
+                    group_start = start
+                current_group.append(word)
+                
+                if len(current_group) >= 5 or word[-1] in ".!?":
+                    group_text = " ".join(current_group)
+                    clip = create_dynamic_text_clip(
+                        text=group_text,
+                        total_duration=end - group_start,
+                        video_width=video_width,
+                        position='center'
+                    ).set_start(group_start)
+                    clips.append(clip)
+                    current_group = []
     
     return clips
 
@@ -253,6 +283,37 @@ def save_story_parts(title: str, segments: list, project_id: str):
             part_info = f"Part {i+1}/{len(segments)}"
             with open(part_path, "w", encoding="utf-8") as f:
                 f.write(f"{title}\n\n{part_info}\n\n{segment}")
+
+async def async_generate_speech(text: str, output_path: str) -> List[Tuple[str, float, float]]:
+    """
+    Generates speech and returns word timing information
+    Returns: List of (word, start_time, end_time) tuples
+    """
+    try:
+        # Première instance pour les timings
+        communicate_timing = edge_tts.Communicate(text, "en-US-JennyNeural")
+        word_timings = []
+        async for event in communicate_timing.stream():
+            if event["type"] == "WordBoundary":
+                word_timings.append((
+                    event["text"],
+                    event["offset"] / 10000000,  # Convert to seconds
+                    (event["offset"] + event["duration"]) / 10000000
+                 ))
+        
+        # Deuxième instance pour sauvegarder l'audio
+        communicate_save = edge_tts.Communicate(text, "en-US-JennyNeural")
+        await communicate_save.save(output_path)
+        
+        logger.info(f"Successfully generated speech at {output_path}")
+        return word_timings
+    except Exception as e:
+        logger.error(f"Failed to generate speech: {str(e)}")
+        raise
+
+def generate_speech(text: str, output_path: str) -> List[Tuple[str, float, float]]:
+    """Generate speech from text using Edge TTS and return word timings."""
+    return asyncio.run(async_generate_speech(text, output_path))
 
 def process_story_video(full_video_path: str, title: str, story: str, project_id: str) -> List[str]:
     """
@@ -294,9 +355,9 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
             part_info = f"\nPart {i+1}/{len(segments)}" if len(segments) > 1 else ""
             full_text = f"{title}{part_info}\n\n{segment}"
             
+            # Générer l'audio avec Coqui-TTS
             voice_filename = os.path.join(dirs['voice'], f"audio_{i+1}.mp3")
-            tts = gTTS(text=full_text, lang='en')
-            tts.save(voice_filename)
+            word_timings = generate_speech(full_text, voice_filename)
             audio = AudioFileClip(voice_filename)
             
             # Calculate total duration including end decay
@@ -307,8 +368,8 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
             start_time = random.uniform(0, max_start) if max_start > 0 else 0
             video_segment = full_clip.subclip(start_time, start_time + total_duration)
             
-            # Create subtitles with precise timing from audio analysis
-            subs = create_group_subtitles(full_text, audio.duration, int(video_segment.w))
+            # Create subtitles with precise timing from TTS
+            subs = create_group_subtitles(full_text, audio.duration, int(video_segment.w), word_timings)
             
             # Create final composite with synchronized audio and subtitles
             composite = CompositeVideoClip([

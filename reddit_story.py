@@ -8,7 +8,7 @@ from story_history import StoryHistory
 
 logger = logging.getLogger(__name__)
 
-def get_story(subreddit: str, project_id: str, max_attempts: int = 10) -> Tuple[str, str]:
+def get_story(subreddit: str, project_id: str, max_attempts: int = 10) -> Tuple[str, str, StoryHistory]:
     """
     Fetches a random unused story from specified subreddit.
     
@@ -18,7 +18,7 @@ def get_story(subreddit: str, project_id: str, max_attempts: int = 10) -> Tuple[
         max_attempts: Maximum number of attempts to find unused story
         
     Returns:
-        Tuple containing (title, story_text)
+        Tuple containing (title, story_text, history_object)
         
     Raises:
         RuntimeError: If no unused stories found after max attempts
@@ -49,9 +49,6 @@ def get_story(subreddit: str, project_id: str, max_attempts: int = 10) -> Tuple[
             title = chosen.get("title", "")
             story_text = chosen.get("selftext", "")
             
-            # Ajouter à l'historique
-            history.add_story(title)
-            
             # Sauvegarder dans un fichier
             dirs = get_project_dirs(project_id)
             script_dir = dirs['script']
@@ -61,7 +58,7 @@ def get_story(subreddit: str, project_id: str, max_attempts: int = 10) -> Tuple[
             with open(story_file, "w", encoding="utf-8") as f:
                 f.write(f"{title}\n\n{story_text}")
             
-            return title, story_text
+            return title, story_text, history
         else:
             raise RuntimeError("No unused stories found")
 
