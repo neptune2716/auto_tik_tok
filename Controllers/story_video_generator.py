@@ -307,9 +307,8 @@ def process_story_video(base_video: str, title: str, story: str, project_id: str
             filename = f"{safe_title}.mp4" if len(segments) == 1 else f"{safe_title}_part{i}.mp4"
             out_filename = os.path.join(dirs['final'], filename)
             
-            # Fix: Update progress callback creation to accept extra arguments
-            def progress_wrapper(*args, **kwargs):
-                progress = kwargs.get('progress', args[0] if args else 0)
+            # Fix: Update progress callback creation
+            def progress_wrapper(progress):
                 if progress_callback:
                     progress_callback(progress, f"Writing part {i}/{total_parts}")
             
