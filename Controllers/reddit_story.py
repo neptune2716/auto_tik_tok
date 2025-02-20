@@ -34,15 +34,20 @@ def get_story(subreddit: str, project_id: str, max_attempts: int = 10) -> Tuple[
         response.raise_for_status()
         
         valid_posts = []
+        MIN_WORDS_REQUIRED = 150  # approximates to a 60 sec speech at 150 wpm
         if response.status_code == 200:
             data = response.json().get("data", {}).get("children", [])
             for post in data:
                 post_data = post.get("data", {})
                 title = post_data.get("title", "")
-                if (post_data.get("selftext") and 
-                    post_data.get("id") and 
-                    not history.is_story_used(title)):
-                    valid_posts.append(post_data)
+                story_text = post_data.get("selftext", "")
+                # Check if unused and has content
+                if story_text and post_data.get("id") and not history.is_story_used(title):
+                    total_words = len(title.split()) + len(story_text.split())
+                    if total_words >= MIN_WORDS_REQUIRED:
+                        valid_posts.append(post_data)
+                    else:
+                        logger.info(f"Skipping story '{title}' (only {total_words} words)")
         
         if valid_posts:
             chosen = random.choice(valid_posts)

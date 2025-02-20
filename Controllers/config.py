@@ -8,10 +8,15 @@ load_dotenv()
 settings = load_settings()
 
 # Paths
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up one level from Controllers
+# Set BASE_DIR explicitly to the project root with proper Windows path syntax
+BASE_DIR = r"C:\Users\cyril\OneDrive\Documents\code\test_vacances"
 DATA_DIR = os.path.join(BASE_DIR, "data")
-BASE_VIDEO = os.path.join(DATA_DIR, "base_video.mp4")
 OUTPUT_DIR = os.path.join(BASE_DIR, "generated")
+# Ensure OUTPUT_DIR exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Add missing BASE_VIDEO variable pointing to the base video file
+BASE_VIDEO = os.path.join(DATA_DIR, "base_video.mp4")
 
 # Video settings
 IMAGEMAGICK_PATH = os.getenv('IMAGEMAGICK_PATH', r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe")
@@ -40,7 +45,7 @@ HISTORY_FILE = os.path.join(DATA_DIR, "story_history.json")
 
 def get_project_dirs(project_id: str) -> dict:
     """Returns dictionary of project-specific directory paths."""
-    project_dir = os.path.join(OUTPUT_DIR, f"Video{project_id}")
+    project_dir = os.path.join(OUTPUT_DIR, project_id)
     return {
         'project': project_dir,
         'final': os.path.join(project_dir, 'final'),

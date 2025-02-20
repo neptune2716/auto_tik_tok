@@ -208,7 +208,6 @@ class VideoProgressLogger(ProgressBarLogger):
         self.current_bar = None
 
     def bars_callback(self, bar, attr, value, old_value=None):
-        """Handle progress updates for bars"""
         if bar not in self._bars:
             self._bars[bar] = {'total': 100, 'index': 0}
         
@@ -220,7 +219,6 @@ class VideoProgressLogger(ProgressBarLogger):
             self._update_progress()
 
     def _update_progress(self):
-        """Calculate and send progress update"""
         if self.current_bar and self.current_bar in self._bars:
             bar_data = self._bars[self.current_bar]
             if bar_data['total'] > 0:
@@ -232,11 +230,6 @@ class VideoProgressLogger(ProgressBarLogger):
                         print(f"Progress callback error: {e}")
 
     def __call__(self, **kwargs):
-        """Handle direct logger calls"""
-        if 'message' in kwargs and len(kwargs) == 1:
-            return
-            
-        # Pass everything to parent
         super().__call__(**kwargs)
 
 def get_voice_name(selected_voice: str) -> str:
@@ -307,12 +300,14 @@ def process_story_video(base_video: str, title: str, story: str, project_id: str
             filename = f"{safe_title}.mp4" if len(segments) == 1 else f"{safe_title}_part{i}.mp4"
             out_filename = os.path.join(dirs['final'], filename)
             
-            # Fix: Update progress callback creation
-            def progress_wrapper(progress):
-                if progress_callback:
-                    progress_callback(progress, f"Writing part {i}/{total_parts}")
+            # Fix: Update lambda to handle prog argument correctly
+            def make_progress_callback(part_num, total_parts):
+                def callback(progress=0, message=f"Processing part {part_num}/{total_parts}", **kwargs):
+                    if progress_callback:
+                        progress_callback(progress, message)
+                return callback
             
-            progress_logger = VideoProgressLogger(progress_wrapper)
+            progress_logger = VideoProgressLogger(make_progress_callback(i, total_parts))
             
             composite.write_videofile(
                 out_filename,
@@ -330,3 +325,22 @@ def process_story_video(base_video: str, title: str, story: str, project_id: str
     finally:
         if 'full_clip' in locals():
             full_clip.close()
+        # Clean up temporary video files at project root
+        cleanup_temp_videos()
+
+
+def cleanup_temp_videos() -> None:
+    """
+    Deletes temporary video files created at the project's root.
+    This function searches for files with names starting with 'temp' and ending with '.mp4'.
+    """
+    import glob
+    root_dir = "/c:/Users/cyril/OneDrive/Documents/code/test_vacances"
+    temp_pattern = os.path.join(root_dir, "temp*.mp4")
+    temp_files = glob.glob(temp_pattern)
+    for temp_file in temp_files:
+        try:
+            os.remove(temp_file)
+            logger.info(f"Deleted temporary file: {temp_file}")
+        except Exception as err:
+            logger.error(f"Failed to delete temp file {temp_file}: {err}")

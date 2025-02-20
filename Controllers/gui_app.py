@@ -56,6 +56,14 @@ log_queue = queue.Queue()
 # Add path for videos database
 VIDEOS_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "videos.json")
 
+# Add these constants at the top of the file, after the imports
+VIDEO_STATUS = {
+    'GENERATED': 'Generated',
+    'MISSING': 'Generated (File Deleted)',
+    'ERROR': 'Error',
+    'GENERATING': 'Generating'
+}
+
 class GuiApp:
     def __init__(self, master):
         self.master = master
@@ -220,10 +228,14 @@ class GuiApp:
             self.videos_tree.heading(col, text=col.title())
             self.videos_tree.column(col, width=100, anchor='center')
 
+        # Bind double-click and Enter key to handle_item_activation
+        self.videos_tree.bind('<Double-1>', self.handle_item_activation)
+        self.videos_tree.bind('<Return>', self.handle_item_activation)
+
         # Right-click menu for copying text
         self.tree_menu = tk.Menu(self.master, tearoff=0)
         self.tree_menu.add_command(label="Copier le texte", command=self.copy_cell_text)
-        self.tree_menu.add_command(label="Ouvrir", command=self.open_selected_video)
+        self.tree_menu.add_command(label="Ouvrir", command=self.open_selected_video)  # Changed this line
         self.tree_menu.add_command(label="Supprimer", command=self.delete_selected_video)
         
         # Bind right-click to show menu
@@ -371,29 +383,29 @@ class GuiApp:
 
     def generate_video_thread(self, selected_voice):
         try:
-            # Generate Project ID
-            project_id = find_next_project_id()
-            self.log_info(f"Starting new project: {project_id}")
-
             # Update progress (10%)
             self.master.after(0, lambda: self.overall_progress.config(value=10))
             self.set_status("Fetching story...", "info")
 
-            # Fetch story
+            # Fetch story using a temporary project_id
             subreddit = self.subreddit_var.get()
-            title, story, history = get_story(subreddit, project_id)
+            title, story, history = get_story(subreddit, "temp")
             self.log_info(f"Fetched story: {title}")
+
+            # Now generate the project_id using the fetched title
+            project_id = find_next_project_id(title)
+            self.log_info(f"Starting new project: {project_id}")
 
             # Update progress (30%)
             self.master.after(0, lambda: self.overall_progress.config(value=30))
             self.set_status("Generating video...", "info")
 
-            # Calculate parts (changed from segments)
+            # Update part info based on story parts (if applicable)
             parts = len(story.split('\n\n'))
-            self.total_segments = parts  # Keep variable name for compatibility
-            self.update_segment_info(0, parts)  # Changed to use parts
+            self.total_segments = parts
+            self.update_segment_info(0, parts)
 
-            # Process video with selected voice and progress callback
+            # Process video with the correct project_id and selected voice
             output_files = process_story_video(
                 BASE_VIDEO,
                 title,
@@ -572,122 +584,141 @@ class GuiApp:
 
         # Add videos from database as parent rows, with child rows for parts if applicable.
         for video_id, data in sorted(self.videos_db.items(), reverse=True):
-            # Insert parent row: use video_id as tree column text
+            # Check parent status based on files existence
+            files = data.get('files', [])
+            if not files:
+                parent_status = VIDEO_STATUS['ERROR']
+            else:
+                # Check if all files exist
+                all_exist = all(os.path.exists(f) for f in files)
+                any_exist = any(os.path.exists(f) for f in files)
+                
+                if all_exist:
+                    parent_status = VIDEO_STATUS['GENERATED']
+                elif any_exist:
+                    parent_status = VIDEO_STATUS['MISSING'] + f" ({sum(os.path.exists(f) for f in files)}/{len(files)})"
+                else:
+                    parent_status = VIDEO_STATUS['MISSING']
+
             parent_values = (
                 data.get('title', 'Unknown'),
                 data.get('date', ''),
-                data.get('status', 'Unknown'),
+                parent_status,
                 data.get('length', ''),
                 data.get('parts', '1')
             )
             parent_iid = str(video_id)
             self.videos_tree.insert('', 'end', iid=parent_iid, text=str(video_id), values=parent_values)
-            files = data.get('files', [])
-            if len(files) > 1:  # More than one part exists
-                for idx, file in enumerate(files, start=1):
-                    # Compute individual part length if file exists; else "Generating"
-                    if os.path.exists(file):
-                        try:
-                            from moviepy.editor import VideoFileClip
-                            with VideoFileClip(file) as clip:
-                                part_length = humanize.precisedelta(clip.duration)
-                        except Exception:
-                            part_length = 'N/A'
+            
+            total_parts = data.get('parts', len(files))
+            if total_parts > 1:
+                for idx in range(1, total_parts + 1):
+                    # Determine status label and part length
+                    if idx <= len(files):
+                        file = files[idx-1]
+                        if os.path.exists(file):
+                            try:
+                                from moviepy.editor import VideoFileClip
+                                with VideoFileClip(file) as clip:
+                                    part_length = humanize.precisedelta(clip.duration)
+                                part_status = VIDEO_STATUS['GENERATED']
+                            except Exception:
+                                part_length = 'N/A'
+                                part_status = VIDEO_STATUS['ERROR']
+                        else:
+                            part_length = '-'
+                            part_status = VIDEO_STATUS['MISSING']
                     else:
-                        part_length = 'Generating'
+                        part_status = VIDEO_STATUS['GENERATING']
+                        part_length = '-'
+                        
                     child_values = (
                         f"{data.get('title', 'Unknown')} (Part {idx})",
                         data.get('date', ''),
-                        data.get('status', 'Unknown'),
+                        part_status,
                         part_length,
-                        ''  # Leave parts column empty
+                        ''  # parts column empty for child rows
                     )
                     child_iid = f"{parent_iid}_part_{idx}"
                     self.videos_tree.insert(parent_iid, 'end', iid=child_iid, text="", values=child_values)
 
     def open_selected_video(self, event=None):
-        selections = self.videos_tree.selection()
-        for item in selections:
-            if "_part_" in item:
-                # Child row handling
-                parent_id, part_str = item.split("_part_")
-                try:
-                    part_index = int(part_str) - 1
-                except ValueError:
-                    continue
-                entry = self.videos_db.get(str(parent_id)) or self.videos_db.get(parent_id)
-                if entry and entry.get('files') and len(entry['files']) > part_index:
-                    video_file = entry['files'][part_index]
-                    if os.path.exists(video_file):
-                        try:
-                            os.startfile(video_file)
-                            self.log_info(f"Ouverture de la vidéo (Part {part_index+1}): {video_file}")
-                        except Exception as e:
-                            self.log_error(f"Erreur à l'ouverture de la vidéo (Part {part_index+1}): {str(e)}")
-                    else:
-                        self.log_error(f"Fichier vidéo introuvable pour {parent_id} (Part {part_index+1}).")
-                else:
-                    self.log_info(f"Aucune vidéo associée pour {parent_id} (Part {part_index+1}).")
-            else:
-                # Parent row: Open first file
-                video_id = self.videos_tree.item(item)['values'][0]
-                entry = self.videos_db.get(str(video_id)) or self.videos_db.get(video_id)
-                if entry and entry.get('files'):
-                    video_file = entry['files'][0]
-                    if os.path.exists(video_file):
-                        try:
-                            os.startfile(video_file)
-                            self.log_info(f"Ouverture de la vidéo: {video_file}")
-                        except Exception as e:
-                            self.log_error(f"Erreur à l'ouverture de la vidéo: {str(e)}")
-                    else:
-                        self.log_error(f"Fichier vidéo introuvable pour l'enregistrement {video_id}.")
-                else:
-                    self.log_info(f"Aucune vidéo associée à l'enregistrement {video_id}.")
+        """Handler for the Open menu item and general video opening requests"""
+        self.handle_item_activation(None)  # Reuse the handle_item_activation logic
 
     def delete_selected_video(self, event=None):
+        """Delete selected video entries and their associated files"""
         selections = self.videos_tree.selection()
+        if not selections:
+            return
+            
+        # Ask for confirmation
+        message = "Are you sure you want to delete the selected videos?"
+        if not messagebox.askyesno("Confirm Deletion", message):
+            return
+
+        # Group selections by parent ID to handle both parent and child selections
+        to_delete = {}  # {parent_id: [part_indices]}
         for item in selections:
             if "_part_" in item:
-                # Child row deletion: remove individual part
+                # Child row
                 parent_id, part_str = item.split("_part_")
                 try:
                     part_index = int(part_str) - 1
+                    if parent_id not in to_delete:
+                        to_delete[parent_id] = []
+                    to_delete[parent_id].append(part_index)
                 except ValueError:
                     continue
-                entry = self.videos_db.get(str(parent_id)) or self.videos_db.get(parent_id)
-                if entry and entry.get('files') and len(entry['files']) > part_index:
-                    video_file = entry['files'][part_index]
+            else:
+                # Parent row - mark for complete deletion
+                to_delete[item] = None  # None means delete all parts
+
+        # Process deletions
+        for parent_id, part_indices in to_delete.items():
+            entry = self.videos_db.get(str(parent_id)) or self.videos_db.get(parent_id)
+            if not entry:
+                continue
+
+            if part_indices is None:
+                # Delete entire entry
+                for video_file in entry.get('files', []):
                     if os.path.exists(video_file):
                         try:
                             os.remove(video_file)
-                            self.log_info(f"Fichier supprimé: {video_file}")
+                            self.log_info(f"File deleted: {video_file}")
                         except Exception as e:
-                            self.log_error(f"Erreur lors de la suppression de {video_file}: {str(e)}")
-                    # Remove the part from the parent's file list
-                    entry['files'].pop(part_index)
-                    # Update parts count in parent's record
-                    entry['parts'] = len(entry.get('files', []))
-                else:
-                    self.log_info(f"Aucun fichier associé pour {parent_id} (Part {part_index+1}).")
+                            self.log_error(f"Error deleting {video_file}: {str(e)}")
+                self.videos_db.pop(str(parent_id), None)
+                self.videos_db.pop(parent_id, None)
             else:
-                # Parent row deletion: remove entire entry and all associated files
-                video_id = self.videos_tree.item(item)['values'][0]
-                entry = self.videos_db.get(str(video_id)) or self.videos_db.get(video_id)
-                if entry:
-                    files = entry.get('files', [])
-                    for video_file in files:
+                # Delete specific parts
+                files = entry.get('files', [])
+                # Sort indices in reverse order to avoid shifting issues
+                for idx in sorted(part_indices, reverse=True):
+                    if 0 <= idx < len(files):
+                        video_file = files[idx]
                         if os.path.exists(video_file):
                             try:
                                 os.remove(video_file)
-                                self.log_info(f"Fichier supprimé: {video_file}")
+                                self.log_info(f"File deleted: {video_file}")
                             except Exception as e:
-                                self.log_error(f"Erreur lors de la suppression de {video_file}: {str(e)}")
-                    self.videos_db.pop(str(video_id), None)
-                    self.videos_db.pop(video_id, None)
+                                self.log_error(f"Error deleting {video_file}: {str(e)}")
+                        del files[idx]
+                
+                # Update entry
+                if files:
+                    entry['files'] = files
+                    entry['parts'] = len(files)
+                else:
+                    # If no files left, remove the entire entry
+                    self.videos_db.pop(str(parent_id), None)
+                    self.videos_db.pop(parent_id, None)
+
+        # Save changes and refresh display
         self.save_videos_db()
         self.refresh_videos_list()
-        self.log_info("Enregistrements sélectionnés supprimés.")
+        self.log_info("Selected entries deleted successfully.")
 
     def add_video_to_db(self, project_id: str, title: str, output_files: list):
         """Add a new video entry to the database"""
@@ -775,7 +806,46 @@ class GuiApp:
             self.master.clipboard_append(text)
             self.log_info("Copied row to clipboard")
 
+    def handle_item_activation(self, event=None):
+        """Handle double-click or Enter key on tree items"""
+        # Get the selected item
+        if event and event.type == '4':  # Double-click event
+            item = self.videos_tree.identify('item', event.x, event.y)
+        else:
+            selection = self.videos_tree.selection()
+            if not selection:
+                return
+            item = selection[0]
+
+        # Only process child rows (parts)
+        if not item or "_part_" not in item:
+            return  # Let default handling occur for parent rows (expand/collapse)
+
+        parent_id, part_str = item.split("_part_")
+        try:
+            part_index = int(part_str) - 1
+            entry = self.videos_db.get(str(parent_id)) or self.videos_db.get(parent_id)
+            
+            if entry and entry.get('files') and len(entry['files']) > part_index:
+                video_file = entry['files'][part_index]
+                if os.path.exists(video_file):
+                    try:
+                        os.startfile(video_file)
+                        self.log_info(f"Opening video (Part {part_index+1}): {video_file}")
+                    except Exception as e:
+                        self.log_error(f"Error opening video (Part {part_index+1}): {str(e)}")
+                        messagebox.showerror("Error", f"Could not open video: {str(e)}")
+                else:
+                    self.log_error(f"Video file not found for {parent_id} (Part {part_index+1}).")
+                    messagebox.showerror("Error", "Video file not found")
+            else:
+                self.log_info(f"No video associated with {parent_id} (Part {part_index+1}).")
+        except (ValueError, IndexError) as e:
+            self.log_error(f"Error processing video part: {str(e)}")
+            return
+
 if __name__ == "__main__":
-    root = tk.Tk()  # Use tk.Tk() instead of ThemedTk
+    root = tk.Tk()  # Create main window
+    root.state("zoomed")  # Maximize window by default
     app = GuiApp(root)
     root.mainloop()
