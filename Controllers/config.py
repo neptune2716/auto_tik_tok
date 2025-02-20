@@ -1,7 +1,11 @@
 import os
 from dotenv import load_dotenv
+from settings_manager import load_settings
 
 load_dotenv()
+
+# Load settings for dynamic values
+settings = load_settings()
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up one level from Controllers
@@ -14,8 +18,10 @@ IMAGEMAGICK_PATH = os.getenv('IMAGEMAGICK_PATH', r"C:\Program Files\ImageMagick-
 FONT_SIZE = 80  # Taille de base pour une vidéo 1080p
 FONT_SIZE_TITLE = FONT_SIZE * 1.2  # 20% plus grand pour les titres
 FONT_NAME = "Impact"
-MIN_WORDS_PER_SEGMENT = 150
-MAX_WORDS_PER_SEGMENT = 225
+
+# Dynamic segment lengths from settings
+MIN_WORDS_PER_SEGMENT = settings.get('min_words_segment', 150)
+MAX_WORDS_PER_SEGMENT = settings.get('max_words_segment', 225)
 
 # Reddit settings
 SUBREDDIT = "funnystories"

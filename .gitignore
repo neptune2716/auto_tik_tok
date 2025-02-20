@@ -31,3 +31,8 @@ used_stories.json
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Ignore sensitive JSON files
+/data/settings.json
+/data/videos.json
+# Add any other sensitive JSON files here

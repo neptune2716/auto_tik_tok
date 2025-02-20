@@ -12,6 +12,7 @@ from config import (
     MIN_WORDS_PER_SEGMENT, MAX_WORDS_PER_SEGMENT, OUTPUT_DIR,
     get_project_dirs, VOICE_OPTIONS
 )
+from proglog import ProgressBarLogger
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,12 @@ change_settings({"IMAGEMAGICK_BINARY": IMAGEMAGICK_PATH})
 def split_text_into_segments(story: str, min_words: int = MIN_WORDS_PER_SEGMENT, max_words: int = MAX_WORDS_PER_SEGMENT) -> list:
     """
     Splits the story into segments at sentence boundaries with overlap.
-    Returns a list of (segment_text, last_sentence) tuples.
+    Returns a list of segments.
     """
     sentences = re.split(r'(?<=[.!?])\s+', story)
     segments = []
     current_segment = ""
     current_count = 0
-    last_sentence = None
     
     for sentence in sentences:
         words = sentence.split()
@@ -36,17 +36,14 @@ def split_text_into_segments(story: str, min_words: int = MIN_WORDS_PER_SEGMENT,
         if current_count + count <= max_words:
             current_segment = f"{current_segment} {sentence}".strip()
             current_count += count
-            last_sentence = sentence
         else:
             if current_count < min_words:
                 current_segment = f"{current_segment} {sentence}".strip()
                 current_count += count
-                last_sentence = sentence
             else:
                 segments.append(current_segment)
                 current_segment = sentence
                 current_count = count
-                last_sentence = sentence
     
     if current_segment:
         segments.append(current_segment)
@@ -63,17 +60,14 @@ def split_text_into_segments(story: str, min_words: int = MIN_WORDS_PER_SEGMENT,
     
     return final_segments
 
-# Replace the dynamic text clip with a fixed TextClip for 5-word groups.
 def create_dynamic_text_clip(text: str, total_duration: float, video_width: int, fontsize: int = FONT_SIZE, font: str = FONT_NAME, position: str = 'center') -> VideoClip:
     """
     Creates a text clip with enhanced visibility and contrast.
     """
-    from moviepy.editor import TextClip, CompositeVideoClip
-    
     margin = int(video_width * 0.05)
     processed_text = text.upper().replace("-", "-\n")
     
-    # Créer le texte principal
+    # Create main text
     main_text = TextClip(
         processed_text,
         fontsize=fontsize,
@@ -83,10 +77,10 @@ def create_dynamic_text_clip(text: str, total_duration: float, video_width: int,
         size=(video_width - 2 * margin, None),
         align='center',
         stroke_color='black',
-        stroke_width=2.5  # Contour noir plus épais
+        stroke_width=2.5
     )
     
-    # Créer une ombre du texte
+    # Create shadow text
     shadow = TextClip(
         processed_text,
         fontsize=fontsize,
@@ -94,125 +88,23 @@ def create_dynamic_text_clip(text: str, total_duration: float, video_width: int,
         color='black',
         method='caption',
         size=(video_width - 2 * margin, None),
-        align='center',
-    ).set_position(lambda t: (2, 2))  # Décalage de l'ombre
+        align='center'
+    ).set_position(lambda t: (2, 2))
     
-    # Combiner l'ombre et le texte principal
-    final_clip = CompositeVideoClip([
-        shadow,
-        main_text
-    ], size=main_text.size)
-    
+    final_clip = CompositeVideoClip([shadow, main_text], size=main_text.size)
     return final_clip.set_duration(total_duration).set_position(position)
 
-def split_into_dynamic_groups(segment: str, is_title: bool = False) -> list:
-    """
-    Splits the segment into groups of words.
-    If is_title is True, returns the entire segment as one group.
-    Otherwise splits into groups of 3-6 words based on punctuation.
-    """
-    if is_title:
-        return [segment]
-    
-    words = segment.split()
-    groups = []
-    i = 0
-    n = len(words)
-    while i < n:
-        group = []
-        for j in range(6):
-            if i + j >= n:
-                break
-            word = words[i+j]
-            group.append(word)
-            if j >= 2:  # at least 3 words in group
-                if word and word[-1] in ".!,;:?":
-                    break
-                if j == 4:
-                    if i + 5 < n and words[i+5] and words[i+5][-1] in ".!,;:?":
-                        group.append(words[i+5])
-                    break
-        groups.append(" ".join(group).strip())
-        i += len(group)
-    return groups
-
-def estimate_word_timings(audio_duration: float, segment: str) -> list:
-    """
-    Estimates word timings based on total audio duration and word count.
-    Returns a list of (word_group, start_time, end_time) tuples.
-    """
-    # Split into title, part info (if exists), and content
-    parts = segment.split('\n\n')
-    title = parts[0]
-    content_start_idx = 1
-    part_info = None
-    
-    # Check if second part is a "Part X/Y" line
-    if len(parts) > 2 and parts[1].strip().startswith('Part '):
-        part_info = parts[1]
-        content_start_idx = 2
-    
-    content = '\n\n'.join(parts[content_start_idx:])
-    
-    words = segment.split()
-    total_words = len(words)
-    time_per_word = audio_duration / total_words
-    
-    groups = []
-    start_time = 0
-    
-    # Handle title as one group
-    title_words = len(title.split())
-    title_duration = title_words * time_per_word
-    groups.append((title, start_time, start_time + title_duration))
-    start_time += title_duration
-    
-    # Handle part info if exists
-    if part_info:
-        part_words = len(part_info.split())
-        part_duration = part_words * time_per_word
-        groups.append((part_info, start_time, start_time + part_duration))
-        start_time += part_duration
-    
-    # Process content words into regular groups
-    content_words = content.split()
-    current_group = []
-    current_word_count = 0
-    
-    for i, word in enumerate(content_words):
-        current_group.append(word)
-        current_word_count += 1
-        
-        is_end = False
-        if current_word_count >= 3:
-            if word[-1] in ".!?":
-                is_end = True
-            elif current_word_count >= 5:
-                is_end = True
-        
-        if is_end or i == len(content_words) - 1:
-            group_text = " ".join(current_group)
-            end_time = start_time + (current_word_count * time_per_word)
-            groups.append((group_text, start_time, end_time))
-            
-            current_group = []
-            current_word_count = 0
-            start_time = end_time
-    
-    return groups
-
 def create_group_subtitles(segment: str, duration: float, video_width: int, word_timings: List[Tuple[str, float, float]]) -> list:
-    """Creates subtitle clips synchronized with exact TTS timing."""
+    """Creates subtitle clips synchronized with TTS timing."""
     parts = segment.split('\n\n')
     title = parts[0]
     clips = []
     
-    # Trouver les timings du titre
+    # Find timings for the title
     title_words = title.split()
     title_start = None
     title_end = None
     
-    # Chercher le premier et dernier mot du titre dans les timings
     for word, start, end in word_timings:
         if word.lower() == title_words[0].lower() and title_start is None:
             title_start = start
@@ -225,30 +117,22 @@ def create_group_subtitles(segment: str, duration: float, video_width: int, word
             text=title,
             total_duration=title_end - title_start,
             video_width=video_width,
-            fontsize=FONT_SIZE * 1.2,
+            fontsize=int(FONT_SIZE * 1.2),
             position='center'
         ).set_start(title_start)
         clips.append(title_clip)
     
-    # Traiter le reste du texte
+    # Process remaining text as groups
     if len(parts) > 1:
+        # Process all timings after the title words
+        non_title_timings = word_timings[len(title_words):]
         current_group = []
         group_start = None
-        
-        # Remove the filtering of title words - process all words after the title timing
-        non_title_timings = word_timings[len(title_words):]
-        
         for i, (word, start, end) in enumerate(non_title_timings):
-            if len(current_group) == 0:
+            if not current_group:
                 group_start = start
             current_group.append(word)
-            
-            should_create_group = (
-                len(current_group) >= 5 or 
-                word[-1] in ".!?" or
-                i == len(non_title_timings) - 1  # Last word
-            )
-            
+            should_create_group = (len(current_group) >= 5 or word[-1] in ".!?" or i == len(non_title_timings) - 1)
             if should_create_group:
                 group_text = " ".join(current_group)
                 clip = create_dynamic_text_clip(
@@ -259,11 +143,10 @@ def create_group_subtitles(segment: str, duration: float, video_width: int, word
                 ).set_start(group_start)
                 clips.append(clip)
                 current_group = []
-    
     return clips
 
 def save_story_parts(title: str, segments: list, project_id: str):
-    """Saves the story to text files. Creates multiple part files only if needed."""
+    """Saves the story to text files. Creates multiple part files if needed."""
     dirs = get_project_dirs(project_id)
     script_dir = dirs['script']
     os.makedirs(script_dir, exist_ok=True)
@@ -273,18 +156,15 @@ def save_story_parts(title: str, segments: list, project_id: str):
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(f"{title}\n\n{segments[0]}")
     else:
-        # Save full story
         full_script_path = os.path.join(script_dir, "full_script.txt")
         with open(full_script_path, "w", encoding="utf-8") as f:
-            # Remove overlapping sentences for full story
             full_text = []
             for i, segment in enumerate(segments):
-                if i > 0:
-                    segment = segment.split('\n\n', 1)[1] if '\n\n' in segment else segment
+                if i > 0 and '\n\n' in segment:
+                    segment = segment.split('\n\n', 1)[1]
                 full_text.append(segment)
             f.write(f"{title}\n\n{''.join(full_text)}")
         
-        # Save individual parts
         for i, segment in enumerate(segments):
             part_path = os.path.join(script_dir, f"part_{i+1}.txt")
             part_info = f"Part {i+1}/{len(segments)}"
@@ -293,22 +173,20 @@ def save_story_parts(title: str, segments: list, project_id: str):
 
 async def async_generate_speech(text: str, output_path: str, voice_name: str) -> List[Tuple[str, float, float]]:
     """
-    Generates speech and returns word timing information
-    Returns: List of (word, start_time, end_time) tuples
+    Generates speech and returns word timing information.
+    Returns: List of (word, start_time, end_time) tuples.
     """
     try:
-        # Première instance pour les timings
         communicate_timing = edge_tts.Communicate(text, voice_name)
         word_timings = []
         async for event in communicate_timing.stream():
             if event["type"] == "WordBoundary":
                 word_timings.append((
                     event["text"],
-                    event["offset"] / 10000000,  # Convert to seconds
+                    event["offset"] / 10000000,
                     (event["offset"] + event["duration"]) / 10000000
-                 ))
+                ))
         
-        # Deuxième instance pour sauvegarder l'audio
         communicate_save = edge_tts.Communicate(text, voice_name)
         await communicate_save.save(output_path)
         
@@ -322,106 +200,127 @@ def generate_speech(text: str, output_path: str, voice_name: str) -> List[Tuple[
     """Generate speech from text using Edge TTS and return word timings."""
     return asyncio.run(async_generate_speech(text, output_path, voice_name))
 
-def process_story_video(full_video_path: str, title: str, story: str, project_id: str) -> List[str]:
+class VideoProgressLogger(ProgressBarLogger):
+    def __init__(self, callback=None):
+        super().__init__()
+        self.callback = callback
+        self._bars = {}
+        self.current_bar = None
+
+    def bars_callback(self, bar, attr, value, old_value=None):
+        """Handle progress updates for bars"""
+        if bar not in self._bars:
+            self._bars[bar] = {'total': 100, 'index': 0}
+        
+        if attr == 'total':
+            self._bars[bar]['total'] = value
+        elif attr == 'index':
+            self._bars[bar]['index'] = value
+            self.current_bar = bar
+            self._update_progress()
+
+    def _update_progress(self):
+        """Calculate and send progress update"""
+        if self.current_bar and self.current_bar in self._bars:
+            bar_data = self._bars[self.current_bar]
+            if bar_data['total'] > 0:
+                progress = int((bar_data['index'] / bar_data['total']) * 100)
+                if callable(self.callback):
+                    try:
+                        self.callback(progress)
+                    except Exception as e:
+                        print(f"Progress callback error: {e}")
+
+    def __call__(self, **kwargs):
+        """Handle direct logger calls"""
+        if 'message' in kwargs and len(kwargs) == 1:
+            return
+            
+        # Pass everything to parent
+        super().__call__(**kwargs)
+
+def get_voice_name(selected_voice: str) -> str:
+    """Get the voice name, handling 'random' selection"""
+    if selected_voice == "random":
+        return random.choice(VOICE_OPTIONS)
+    return selected_voice
+
+def process_story_video(base_video: str, title: str, story: str, project_id: str, voice: str = None, progress_callback=None) -> List[str]:
     """
-    Process the story into one or more video segments with TTS and subtitles.
-    
+    Process a story into a video with voiceover and subtitles.
     Args:
-        full_video_path: Path to the base background video
-        title: Story title
-        story: Main story content
+        base_video: Path to the base video file
+        title: Title of the story
+        story: Text content of the story
         project_id: Unique identifier for the project
-        
-    Returns:
-        List of paths to generated video files
-        
-    Raises:
-        FileNotFoundError: If input video doesn't exist
-        RuntimeError: If video processing fails
+        voice: Voice name to use for TTS (optional)
+        progress_callback: Optional callback function for progress updates
     """
     try:
-        if not os.path.exists(full_video_path):
-            raise FileNotFoundError(f"Base video not found: {full_video_path}")
-
-        segments = split_text_into_segments(story, MIN_WORDS_PER_SEGMENT, MAX_WORDS_PER_SEGMENT)
-        logger.info(f"Split story into {len(segments)} segment(s)")
-        
-        # Select random voice to use for all segments
-        selected_voice = random.choice(VOICE_OPTIONS)
+        logger.info(f"Using voice: {voice}")
+        selected_voice = get_voice_name(voice) if voice else get_voice_name("random")
         logger.info(f"Selected voice: {selected_voice}")
+
+        if not os.path.exists(base_video):
+            raise FileNotFoundError(f"Base video not found: {base_video}")
         
-        # Estimate total duration needed (rough estimation)
-        # Assuming average speaking rate of 150 words per minute
-        words = story.split()
-        estimated_duration = len(words) / 150 * 60  # Convert to seconds
-        
-        if estimated_duration < 60:  # Less than 1 minute
-            raise RuntimeError(f"Story too short, estimated duration: {estimated_duration:.1f} seconds")
-            
-        # Save story parts to files
-        save_story_parts(title, segments, project_id)
-        
-        full_clip = VideoFileClip(full_video_path)
-        full_duration = full_clip.duration
-        output_files = []
+        segments = split_text_into_segments(story, MIN_WORDS_PER_SEGMENT, MAX_WORDS_PER_SEGMENT)
+        total_parts = len(segments)
+        logger.info(f"Split story into {total_parts} part(s)")
         
         dirs = get_project_dirs(project_id)
         for dir_path in dirs.values():
             os.makedirs(dir_path, exist_ok=True)
         
-        for i, segment in enumerate(segments):
-            # Create full text including title and part info
-            part_info = f"\nPart {i+1}/{len(segments)}" if len(segments) > 1 else ""
+        save_story_parts(title, segments, project_id)
+        full_clip = VideoFileClip(base_video)
+        full_duration = full_clip.duration
+        output_files = []
+        
+        for i, segment in enumerate(segments, 1):  # Start counting from 1
+            if progress_callback:
+                # Update part progress (0-100 for each part)
+                progress_callback(0, f"Processing part {i}/{total_parts}")
+            
+            part_info = f"\nPart {i}/{total_parts}" if total_parts > 1 else ""
             full_text = f"{title}{part_info}\n\n{segment}"
             
-            # Generate audio with selected voice
-            voice_filename = os.path.join(dirs['voice'], f"audio_{i+1}.mp3")
+            voice_filename = os.path.join(dirs['voice'], f"audio_{i}.mp3")
             word_timings = generate_speech(full_text, voice_filename, selected_voice)
             audio = AudioFileClip(voice_filename)
             
-            # Simple duration without decay
-            total_duration = audio.duration + 3  # Add 3s for last subtitle to be readable
+            total_duration = audio.duration + 3  # extra time for last subtitle
+            if full_duration < total_duration:
+                raise RuntimeError("Base video is shorter than required segment duration")
             
-            # Extract video segment
             max_start = full_duration - total_duration
             start_time = random.uniform(0, max_start) if max_start > 0 else 0
             video_segment = full_clip.subclip(start_time, start_time + total_duration)
             
-            # Create subtitles with precise timing from TTS
             subs = create_group_subtitles(full_text, audio.duration, int(video_segment.w), word_timings)
-            
-            # Extend the duration of the last subtitle to the end of the video
             if subs:
                 last_sub = subs[-1]
                 subs[-1] = last_sub.set_duration(total_duration - last_sub.start)
             
-            # Create final composite without audio fade
-            composite = CompositeVideoClip([
-                video_segment.set_audio(audio)  # No audio fade
-            ] + subs)
-            
-            # Configure progress bar and save
-            from proglog import ProgressBarLogger
-            class MyBarLogger(ProgressBarLogger):
-                def bars_callback(self, bar, attr, value, old_value=None):
-                    percentage = (value / self.bars[bar]['total']) * 100
-                    print(f"Writing video: {percentage:.0f}% complete", end='\r')
-
-            # Remplacer les caractères non autorisés dans le nom de fichier
-            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
-            safe_title = safe_title.replace(' ', '_')
-            
-            if len(segments) == 1:
-                filename = f"{safe_title}.mp4"
-            else:
-                filename = f"{safe_title}_part{i+1}.mp4"
-                
+            composite = CompositeVideoClip([video_segment.set_audio(audio)] + subs)
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')
+            filename = f"{safe_title}.mp4" if len(segments) == 1 else f"{safe_title}_part{i}.mp4"
             out_filename = os.path.join(dirs['final'], filename)
             
-            composite.write_videofile(out_filename, 
-                                    audio_codec="aac",
-                                    logger=MyBarLogger())
-            print("\nVideo writing completed!")
+            # Fix: Update progress callback creation to accept extra arguments
+            def progress_wrapper(*args, **kwargs):
+                progress = kwargs.get('progress', args[0] if args else 0)
+                if progress_callback:
+                    progress_callback(progress, f"Writing part {i}/{total_parts}")
+            
+            progress_logger = VideoProgressLogger(progress_wrapper)
+            
+            composite.write_videofile(
+                out_filename,
+                audio_codec="aac",
+                logger=progress_logger
+            )
+            logger.info(f"Part {i}/{total_parts} written: {out_filename}")
             output_files.append(out_filename)
         
         return output_files
@@ -430,5 +329,5 @@ def process_story_video(full_video_path: str, title: str, story: str, project_id
         logger.error(f"Failed to process video: {str(e)}", exc_info=True)
         raise RuntimeError(f"Video processing failed: {str(e)}")
     finally:
-        if 'full_clip' in locals(): 
+        if 'full_clip' in locals():
             full_clip.close()

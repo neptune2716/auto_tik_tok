@@ -49,8 +49,8 @@ def main() -> None:
         logger.info(f"Fetched story: {word_count} words")
         logger.info(f"Title: {title}")
 
-        # Générer la vidéo
-        output_videos = process_story_video(BASE_VIDEO, title, story, project_id)
+        # Générer la vidéo - update to use random voice by default
+        output_videos = process_story_video(BASE_VIDEO, title, story, project_id, voice="random")
         
         # Si on arrive ici, la génération a réussi, on peut mettre à jour l'historique
         history.add_story(title)

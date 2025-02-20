@@ -1,4 +1,4 @@
-# Reddit Stories to Video Generator
+# Test Vacances
 
 Automatically creates TikTok/Reels style videos from Reddit stories with text-to-speech and synchronized subtitles.
 
@@ -66,6 +66,14 @@ test_vacances/
     ├── voice/           # TTS audio files
     └── story/           # Story text files
 ```
+
+## Configuration
+
+Sensitive JSON files (such as configuration and database files in the `/data/` directory) are ignored by Git.  
+If you need to set custom values, create or update the following files manually:
+
+- `/data/settings.json`
+- `/data/videos.json`
 
 ## Usage
 
